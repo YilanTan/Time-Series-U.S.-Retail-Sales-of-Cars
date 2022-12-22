@@ -1,0 +1,459 @@
+---
+title: "Time Series: U.S. Retail Sales of Cars"
+author: "Yilan Tan"
+date: "2022-10-11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(TSstudio)
+library(ggplot2)
+library(scales)
+library(lubridate)
+library(tidyverse)
+library(mlbench)
+library(kableExtra)
+library(lmtest)
+```
+
+```{r, warning=FALSE, include=FALSE, echo=FALSE}
+# Input the data
+# Change the class of the variable Time from integer to numeric
+# Redefine Month as a factor variable fMonth
+
+carsales<-read.csv("NewCarSales.txt", header=T)
+attach(carsales)
+Time<-as.numeric(Time)
+carsales$Date <- as.Date(carsales$Date, "%Y-%m-%d")
+fMonth<-as.factor(Month)
+carsales<-data.frame(carsales,fMonth)
+carsales.ts<-ts(carsales,start=c(1993,1),freq=12)
+```
+
+```{r, include=FALSE}
+# Contraction Cycle
+cycle(carsales.ts)
+col = c(rep("black", 98), rep("red", 9), rep("black", 72), rep("red", 19), rep("black", 127), rep("red", 3), rep("black", 27))
+```
+
+## Introduction
+
+In this study, we analysis the data of U.S. retail sales of cars from 1993 to Jul.2022. 
+
+1. Log-transformation and first-order differencing are used to eliminate the trend and seasonal structure.
+2. Three multiplicative decomposition models are constructed.
+
+        Model 1: Multiplicative Decomposition Model to Sales (1993-2017)
+        Model 2: Multiplicative Decomposition Model (With Lag Residuals)
+        Model 3: Multiplicative Decomposition Model to Log Return Sales
+
+3. Forecast data of sales from 2018 to 2022 by Model 1 is compared to the real data.
+4. Partial F-test is used to determine the necesserity of variables.
+5. Residual diagnostics are performed to compare the goodness of three models.
+6. Seasonal static index are calculated, tabulated, and interpreted.
+7. Model 1 and model 3's prediction ability of static seasonal index are compared.
+8. Sales data from Mar.2020 to Jul.2022 during COVID-19 period are discussed.
+
+## Exploratory Data Analysis
+
+The data gives monthly U.S. retail sales of cars, in millions of dollars, for the time period 1993 through Jul.2022. 
+
+```{r,echo=FALSE}
+knitr::kable(head(carsales[, c('Date', 'Sales', "c348", "s348", "c432", "s432", "Changepoint", "obs106", "fMonth")]))%>% kable_paper("hover", full_width = F)
+```
+
+For the span of the data there were three time periods judged to be contractions by the Business Cycle Dating Committee. They are Apr.2001 to Nov.2001, Jan.2008 to Jun.2009, and Mar.2020 to Apr.2020.
+
+The first was caused by a drop in manufacturing, and perhaps was also a consequence of the 2000 dot com bubble. The second was the recession caused by a financial crisis which involved, among other problems, inflated real estate prices.The third, only two months in length, occurred at the onset of the COVID pandemic.
+
+**Time Series Plot: Sales vs. Time**
+
+```{r, echo=FALSE}
+ggplot(carsales, aes(x = Date, y = Sales, group=1)) + 
+       geom_line(aes(colour=col)) + 
+       scale_x_date(date_breaks = "2 year", date_labels = "%Y") + 
+       scale_colour_identity() +
+       ggtitle("TS Plot (i): Sales vs. Time, 1993-2022(7)")
+```
+
+New car sales in dollars show a steady upward trend from 1993 to 2000 and a leveling until 2007, followed by a sudden severe drop during the 2008–2009 recession.  Beginning in the second half of 2009, sales move upward at a rate which is steep until 2016, and then the slope decreases somewhat.  There is a severe drop during the downturn in March and April of 2020 as COVID arrives, and then there is noticeably increased sales during 2021 and 2022.  There is no visible decrease in sales stemming from the 2001 recession.  The long-run upward trend is fueled by several factors, including increase in population, price increases for new cars, and probably an increase in the number of multicar families.  A strong rise in sales during 2021 is evident and a bit puzzling, because supply chain delays greatly affected the availability of new cars after COVID arrived, and many buyers switched to the purchase of used cars.  There was some pent-up demand from very low sales in March and April of 2020, and this may have been a factor.  It is also likely that there were price increases in the wake of the supply chain delays.
+
+Another feature of the time series is a pronounced seasonal effect, with sales strongest in the spring and summer months. In addition, the plot shows increasing volatility as the level rises.
+
+**Log-transformation**
+
+```{r, echo=FALSE}
+ggplot(carsales, aes(x = Date, y = logSales, group=1)) +
+       geom_line(aes(colour=col)) + 
+       scale_x_date(date_breaks = "2 year", date_labels = "%Y") + 
+       scale_colour_identity() +
+       ggtitle("TS Plot (ii): logSales vs. Time, 1993-2022(7)")
+```
+
+The plot of the log of sales is similar to the previous plot, except that the pattern of the volatility is different. Here it is more pronounced in the early years, indicating that the log transformation is somewhat of an overcorrection. It is not clear from the two plots whether the changing volatility dictates the fitting of a multiplicative decomposition model, rather than an additive one.
+
+**First-order Differencing**
+
+```{r, echo=FALSE}
+ggplot(data=carsales, aes(x = Date, y = dlogSales, group=1)) +
+       geom_line(aes(colour=col)) + 
+       scale_x_date(date_breaks = "2 year", date_labels = "%Y") + 
+       scale_colour_identity() +
+       ggtitle("TS Plot (iii): dlogSales vs. Time, 1993-2022(7)")
+```
+
+As is common with time series, the log return transformation has removed much of the trend; a small amount remains for the years 2020–2022. The first two economic downturns have had some impact upon the log return. During 2001 there is increased volatility, and during the 2008–2009 recession there is actually decreased volatility. Moreover, the March to April downturn in 2020 produced disruption of  the log return values.
+
+### Spectrum Analysis
+
+The length of our TS data from 1993 to 2017 is 300, and half of the squared root of 300 is 8.66. Therefore, the span for spectrum analysis we choose is 9.
+
+```{r, include=FALSE}
+300^(0.5)/2
+```
+
+```{r, message=FALSE, echo=FALSE}
+spectrum(logSales[1:300], span=9)
+abline(v=c(1/12,2/12,3/12,4/12,5/12,6/12),col="red",lty=2)
+abline(v=c(0.348,0.432),col="blue",lty=2)
+```
+
+Overall, the spectral plot is not flat, we see strong seasonal structure and trend. From the red lines, which show the seasonal frequencies of monthly car logSales data, indicate a strong seasonal component. Blue lines, the calendar structure for the frequencies 0.348 and 0.432, shows that the trigonometric pair for 0.432 is insignificant.
+
+We can see obvious bumps in frequencies 1/12, 2/12, 3/12, 4/12, and 5/12. This reveals a seasonal structure of the log car sales data. Twice of the blue line above the notch is much more smaller than the full extend of the spectrum, revealing that we have to reduced the white noise of the data in order to fit a good prediction model.
+
+These features provide guidance for the construction of a multiplicative decomposition model. Also, we have to include trend components, seasonal components ('fMonth') and trigonometric pair ('c348 and s348')
+
+## Model Fit
+
+### Model 1: Multiplicative Decomposition Model to Sales (1993-2017)
+
+There are about five turns in the graph, therefore, we choose a six-degree polynomial change multiplicative model. Also, we include the seasonal components, the interactions related to the sudden shift around year 2008, one pair of trigonometric variable for frequency 0.348.
+
+```{r, echo=FALSE}
+model3<-lm(logSales~poly(Time,6) + fMonth + Changepoint + Changepoint * poly(Time, 6) + c348 + s348 + obs106, data=carsales[1:300,])
+summary(model3)
+```
+
+The adjusted R-squared is 0.9697, the residual standard error is 0.04008. The trend structure components and seasonal components are significant.
+
+The trend structure is overall not effective because there are a few significant outliers that need to be carefully considered (although we specifically considered the change in 2008). Also, the residual spectral plot suggests that residuals of model 3 are not following white noise structure.
+
+To separate the model into two parts (before and after year 2008) is necessary because all the interactions and Changepoint variables have very small p-values much less than 0.05 (alpha level). This indicates all these variables are significant.
+
+From the summary statistics, the trends given by these two models:
+
+Log sales before the Changepoint/2008:
+
+$$Sales_{Before2008} = exp(4.696-151.2t-142.3t^2-98.45t^3-52.67t^4-19.98t^5-4.482t^6)$$
+Log sales after the Changepoint/2008:
+
+$$Sales_{After2008} = exp(517.996-12025.304t+9958.8t^2-5798.3t^3+2332.33t^4-609.38t^5+79.018t^6)$$
+
+**Static Seasonal Index**
+
+```{r, echo=FALSE}
+b1<-coef(model3)[1]
+b2<-coef(model3)[8:18]+b1
+b3<-c(b1,b2)
+seas3<-exp(b3-mean(b3))
+#((seas3)-1)*100
+
+ind <- cbind(round(seas3,4))
+rownames(ind) <- c('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+knitr::kable(ind, col.names= c("Static Seasonal Index (Model 1)")) %>% kable_paper("hover", full_width = F)
+```
+
+```{r, echo=FALSE}
+seas3.ts<-ts(seas3)
+plot(seas3.ts,ylab="seasonal index",xlab="month", main = "Estimated Static Seasonal Index Plot (Model 1)")
+```
+
+The static seasonal index table indicates that,
+
+In Jan, the car sales is estimated to be 11.44 percent below the level of the trend.   
+In Feb, the car sales is estimated to be 8.01 percent below the level of the trend.   
+In Mar, the car sales is estimated to be 8.22 percent above the level of the trend.   
+In Apr, the car sales is estimated to be 2.48 percent above the level of the trend.   
+In May, the car sales is estimated to be 7.75 percent above the level of the trend.   
+In Jun, the car sales is estimated to be 5.74 percent above the level of the trend.   
+In Jul, the car sales is estimated to be 6.64 percent above the level of the trend.   
+In Aug, the car sales is estimated to be 8.99 percent above the level of the trend.   
+In Sep, the car sales is estimated to be 2.10 percent below the level of the trend.   
+In Oct, the car sales is estimated to be 3.19 percent below the level of the trend.   
+In Nov, the car sales is estimated to be 8.70 percent below the level of the trend.   
+In Dec, the car sales is estimated to be 3.43 percent below the level of the trend.   
+
+The month of highest car sales is August and the month of lowest car sales is January. The Estimated Static Seasonal Index Plot also shows a stable high level of car retails from March to August following by an obvious decrease in September and a recovery in February of the next year. 
+
+**Residual Diagnostics**
+
+```{r, echo=FALSE}
+res3 <- resid(model3) #Save the residuals from the fit
+qqnorm(res3)
+qqline(res3)
+```
+
+```{r, echo=FALSE}
+shapiro.test(res3)
+```
+
+Most points in Normal Q-Q plot follows the theoretical quantile line but there are slight deviation with a few significant outliers near both ends of the line. Low sale values are overestimated and high sale values are underestimated by model 1. Also, the p-value of Shapiro-Wilk normality test is less than 0.05, we are unable to prove that the residuals are normally distributed. Both results indicate that the residuals of model 3 are not perfectly follows normal distribution.
+
+```{r, echo=FALSE}
+plot(ts(res3, start=c(1993,1),  freq=12),  xlab='time', ylab='residuals', main='Residuals vs. Time (Model 3)')
+```
+
+```{r, echo=FALSE}
+acf(ts(resid(model3)), 36)
+```
+
+```{r, echo=FALSE}
+dwtest(model3)
+```
+
+```{r, echo=FALSE}
+shapiro.test(resid(model3))
+```
+
+The Residuals vs. Time plot shows a few outliers around year 2000, 2005 and 2009. The residuals fluctuates around a mean of zero. The variance has strong variation, revealing uncaptured trend structure in Model 1, especially for the contraction period. The lags 1, 6, 12, 18 and 36 exceed the blue lines in the auto-correlation plot, indicating that there are uncaptured variations in model 1. The data are not reduced to white noise perfectly. The Durbin-Watson test value is 1.409 which also shows a positive autocorrelation among the residuals. The Shapiro-Wilk test rejects the hypothesis that the residuals follow a normal distribution.  This is perhaps primarily attributable to three observations which the model underpredicts, at February 2000, July 2005, and August 2009.  Apart from these three, the rest show good agreement with normality.
+
+```{r, message=FALSE, echo=FALSE}
+spectrum(res3,span=9)
+abline(v=c(1/12,2/12,3/12,4/12,5/12,6/12),col="red",lty=2)
+abline(v=c(0.348, 0.432), col="blue", lty=2)
+```
+
+The spectral graph is not flat as we need, indicating that there exists white noise in model 1 (the residuals do not follow the white noise structure). Double of the blue segment above the notch is shorter than the full extent of the spectrum, also indicates that we have not successfully reduced the white noise in the model. Moreover, we see peaks in frequencies 1/12, 3/12, and 5/12, indicating that there is uncaptured seasonal structure. There is no peak of 0.348 and 0.432 as we expected. Model 1 captures the calendar structure well.
+
+**Forecast Sales for 2018–2019**
+
+```{r, echo=FALSE}
+forecast <- predict(model3, newdata=carsales[301:324,])
+forecast_sales <- as.data.frame(exp(forecast))
+forecast_sales$actual <- carsales$Sales[301:324]
+time <- c('2018.1', '2018.2', '2018.3', '2018.4', '2018.5', '2018.6', '2018.7', '2018.8', '2018.9', '2018.10', '2018.11', '2018.12', '2019.1', '2019.2', '2019.3', '2019.4', '2019.5', '2019.6', '2019.7', '2019.8', '2019.9', '2019.10', '2019.11', '2019.12')
+forecast_sales <- cbind(time, forecast_sales)
+rownames(forecast_sales)<-NULL
+colnames(forecast_sales)<-c("Time", "Forecast", "Actual")
+knitr::kable(forecast_sales, caption = "Forecast v.s. Actual Sales (Model 1)") %>% kable_paper("hover", full_width = F)
+```
+
+```{r, echo=FALSE}
+plot(x=0:23, y=forecast_sales$Actual, type="l", col="red", main="Forecast v.s. Actual Sales Plot (Model 1)", sub="Forecast(blue), Actual(red)", xlab="Time", ylab="Sales", ylim=c(60000, 250000))
+lines(x=0:23, y=forecast_sales$Forecast, type="l", col="blue")
+```
+
+By comparing the predicted sales data with the actual data, we can find that the prediction of model 1 is not accurate, and the predicted data is higher than the actual data. In the early period (periods 1 to 10) the prediction is relatively close and the prediction of fluctuation is more accurate (the blue line of patterning is more similar to the red line). However, the further back in time, the more the predicted data deviate from the actual values. It is also possible that the deviation from the forecast data is increasing exponentially because we are using log sales data in the fit model, but all in all, model 1 is not a good predictor of future sales.
+
+### Model 2: Multiplicative Decomposition Model (With Lag Residuals)
+
+The lag 1 residuals have been added to model 1 to perform model 2. 
+
+```{r, echo=FALSE}
+lresid<-c(rep(0,300))
+lag1resid<-lresid
+lag1resid[2]<-resid(model3)[1];lag1resid[3]<-resid(model3)[2]
+for(i in 4:300){
+i1<-i-1
+lag1resid[i]<-resid(model3)[i1]
+}
+```
+
+```{r, echo=FALSE}
+model5<-lm(logSales~poly(Time, 6) + fMonth + Changepoint + Changepoint * poly(Time, 6)+ c348 + s348 + obs106 + lag1resid, data=carsales[1:300,])
+summary(model5)
+```
+
+All the variables in model five have p-values less than 0.05 (alpha level), indicating these variables are significant and necessary to be included in the multiplicative model. The residual standard error of model 2 is 0.03835 which is slightly smaller than model 1. The adjusted R-squared is 0.9722 which is slightly higher than model 1. These indicate that model 2 fits better than model 1 but the improvement is not very significant.
+
+**Residual Diagnostics**
+
+```{r, echo=FALSE}
+res5 <- resid(model5) #Save the residuals from the fit
+qqnorm(res5)
+qqline(res5)
+```
+
+```{r, echo=FALSE}
+shapiro.test(res5)
+```
+
+The Normal Q-Q plot shows a few acceptable outliers near both ends of the theoretical normal line, but the remaining part fits better than model 1. This indicates the residual of model 5 follows the normal distribution better than model 1. The p-value of Shapiro-Wilk normality test of model 2 is slightly greater than that of model 1, although it is still less than 0.05.
+
+```{r, echo=FALSE}
+plot(ts(res5, start=c(1993,1),  freq=12),  xlab='time', ylab='residuals', main='Residuals vs. Time (Model 2)')
+```
+
+```{r, echo=FALSE}
+acf(ts(resid(model5)), 36)
+```
+
+After including lag 1 residuals variable, we can observe significant residuals around year 2001, 2007 and 2009 in residuals vs. time plot. Model 2 is still able to capture the trend structure during economic contraction period fully The variance is obviously not constant, but it is slightly better than residual variance of model 1. Also, lag 6, 12, and 18 exceed the blue line reveals that there exists auto-correlation among residuals. Therefore, the homoscedasticity assumption of residuals is violated. However, comparing to model 1, we can obviously see that lag 1 of the ACF plot becomes insignificant. This indicates that the data of model 2 is getting closer to the white noise structure.
+
+```{r, message=FALSE, echo=FALSE}
+spectrum(res5,span=9)
+abline(v=c(1/12,2/12,3/12,4/12,5/12,6/12),col="red",lty=2) > abline(v=c(0.348,0.432),col="blue",lty=2)
+```
+
+The peaks at frequencies 3/12 and 5/12 show the remaining white noise in model 2. Comparing to model 1, the effect of white noise at frequency 1/12 is eliminated. In this regard, the residual of model 2 is closer to the structure of white noise than model 1.  (The blue line on the top right corner is shorter than this of model 1, but the reason might because it is more extended at point 0. Except for the zero point, the pattern is in the range of 5e-04 to 5e-03, and the scale is the same as model 1.)
+
+```{r, echo=FALSE}
+plot(predict(model5),resid(model5),xlab="Predicted Log Sales",ylab="residuals",main="Residual by Predicted Plot of Model 2")
+abline(0,0)
+```
+
+From the residual vs. predictions plot, we see that points cluster in the middle of the graph. We expect a tendency to be more concentrated on the left and more dispersed on the right. Therefore, the result proves that the residual of the model not satisfy constant variance assumption. 
+
+### Model 3: Multiplicative Decomposition Model to Log Return Sales
+
+We include the seasonal component 'fMonth', the calendar structure variables 'c348, s348, c432, s432' and a dummy variable for the outlier 'obs106' in model 3.
+
+```{r, echo=FALSE}
+model6<-lm(dlogSales~fMonth + c348 + s348 + c432 + s432 + obs106, data=carsales[1:300,])
+summary(model6)
+```
+
+The residual standard error is 0.04748. The adjusted R-squared is 0.7162.
+
+**Significance of Trend Variables: Partial F-test**
+
+```{r, echo=FALSE}
+model6_notrend<-lm(dlogSales~fMonth + Changepoint + c348 + s348 + c432 + s432 + obs106, data=carsales[1:300,])
+model6trend<-lm(dlogSales~poly(Time, 6) + fMonth + Changepoint + c348 + s348 + c432 + s432 + obs106, data=carsales[1:300,])
+anova(model6_notrend, model6trend)
+```
+
+By comparing the model with and without the trend component, the p-value for the partial F-test is 0.3809. This reveals the trend component is insignificant. We are going to remove the polynomial trend variable. Because performing differencing operation on log sales data has already eliminate most trend structure, the trend component seems not necessarily to be included.
+
+**Significance of Changepoint Variables: Partial F-test**
+
+```{r, echo=FALSE}
+model6_nocp<-lm(dlogSales~fMonth + c348 + s348 + c432 + s432 + obs106, data=carsales[1:300,])
+model6_cp<-lm(dlogSales~fMonth + Changepoint + c348 + s348 + c432 + s432 + obs106, data=carsales[1:300,])
+anova(model6_nocp, model6_cp)
+```
+
+The p-value for partial F-test related to "Changepoint" variable is 0.8734, indicating that the variable is insignificant.
+
+**Residual Diagnostics**
+
+```{r, echo=FALSE}
+res6 <- resid(model6) #Save the residuals from the fit
+qqnorm(res6)
+qqline(res6)
+```
+
+```{r, echo=FALSE}
+shapiro.test(res6)
+```
+
+There is an obvious deviation in the left side of the normal quantile plot with a few signicicant outliers. This indicates uncaptured trend of model 3. Low sale values are slightly overestimated by the model. Also, the p-value of Shapiro-Wilk normality test is 1.403e-05, even smaller than model 1 and model 2. Therefore, the residuals of model 3 fail to follow a normal distribution.
+
+```{r, echo=FALSE}
+plot(ts(res6, start=c(1993,1),  freq=12),  xlab='time', ylab='residuals', main='Residuals vs. Time (Model 3)')
+```
+
+```{r, echo=FALSE}
+acf(ts(resid(model6)), 36)
+```
+
+The residuals vs. time plot shows no improvement of capturing the unusual structure of economic downturn periods (comparing to model 1 and model 2). Also, lag 1, 2, 6, 10, 12, 18, and 36 on the ACF plot exceed the blue line, indicating a more auto-correlated residuals of model 3 than these of model 1 and model 2. Lag 6, 12, 18, and 36 are more significant indicates that there is still dynamic seasonal structure. Moreover, the log transformation and differencing operation are not able to deal with the Great Recession effect in 2009.
+
+```{r, message=FALSE, echo=FALSE, warning=FALSE}
+spectrum(res6,span=9)
+abline(v=c(1/12,2/12,3/12,4/12,5/12,6/12),col="red",lty=2) 
+abline(v=c(0.348,0.432),col="blue",lty=2)
+```
+
+The peak around frequency 3/12 reveals remaining trend structure, and the peak at frequency 5/12 reveals  remaining dynamic seasonal structure. The blue dash lines show that no calendar structure remains.
+
+### Static seasonal Index Comparison (Model 1, Model 3)
+
+```{r, echo=FALSE}
+b31<-coef(model3)[1]
+b32<-coef(model3)[8:18]+b31
+b33<-c(b31,b32)
+expseas3<-exp(b33-mean(b33))
+
+b61<-coef(model6)[1]
+b62<-coef(model6)[2:12]+b61
+b63<-c(b61,b62)
+x<-b63-mean(b63)
+
+s12<-0
+for(j in 2:12){
+xsub<-x[j:12]
+s12<-s12+sum(xsub)}
+s12<-s12/12
+s<-c(rep(0,times=12)) 
+s[12]<-s12
+for(j in 1:11){
+xsub<-x[1:j]
+s[j]<-s[12]+sum(xsub)}
+s<-exp(s)
+
+tab <- cbind(expseas3, s)
+rownames(tab) <- c('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')
+knitr::kable(tab, col.names= c('Model 1', 'Model 3'), caption = "Static Seasonal Index Comparison") %>% kable_paper("hover", full_width = F)
+```
+
+```{r}
+plot(ts(expseas3), col="blue", ylab="seasonal index",xlab="month", main = "Estimated Static Seasonal Index Plot ")
+lines(ts(s), col="red")
+legend(1,1.3, legend=c("Model 1","Model 3"), col=c("blue", "red"), pch=4, ncol=1)
+```
+
+The table and the plot below show that the static seasonal index estimates from model 1 and model 3 are almost identical. Although model 1 is not adequately to estimate the trend structure in the following 24 months, it still has the ability to estimate the static seasonal structure.
+
+## Discussion
+
+**Period from Mar.2020 to Jul.2022**
+
+```{r, echo=FALSE}
+ggplot(data=carsales[327:355,], aes(x = Date, y = Sales, group=1)) + 
+       geom_line() + 
+       scale_x_date(date_breaks = "2 month", date_labels = "%m-%Y") + 
+       ggtitle("TS Plot (i): Sales vs. Time, 2020(3)-2022(7)") + 
+       theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r, echo=FALSE}
+ggplot(data=carsales[327:355,], aes(x = Date, y = logSales, group=1)) + 
+       geom_line() + 
+       scale_x_date(date_breaks = "2 month", date_labels = "%m-%Y") + 
+       ggtitle("TS Plot (ii): logSales vs. Time, 2020(3)-2022(7)") + 
+       theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+```{r, echo=FALSE}
+ggplot(data=carsales[327:355,], aes(x = Date, y = dlogSales, group=1)) + 
+       geom_line() + 
+       scale_x_date(date_breaks = "2 month", date_labels = "%m-%Y") + 
+       ggtitle("TS Plot (iii): dlogSales vs. Time, 2020(3)-2022(7)") + 
+       theme(axis.text.x = element_text(angle=45, hjust = 1))
+```
+
+In January and February of 2020 cases of COVID began to appear, and the illness started to dominate news reports. It wasn’t until March 2020 that COVID produced a strong effect on the U.S. economy, giving a two-month economic downturn. Economic recovery began to take effect in May 2020.
+
+The effect of the short recession on new car sales was very strong.  Given the fear of contracting COVID, some potential buyers were reluctant to shop in automotive dealer showrooms.  But more than that, there was a shortage of new cars available for purchase because of supply chain disruptions that affected automotive parts required for manufacturing, and then, of course, many potential customers are reluctant to take on large dollar purchases when there is economic uncertainty and pressure during a recession.  The plots in part 1 show a dramatic drop of new car sales during March and April of 2020.  These months are followed by a more typical level of sales in the remainder of 2020. In 2021 sales increase considerably, perhaps for two reasons.  One is the availability of COVID vaccines, and better understanding of how COVID was spreading and how to be cautious.  Second, there was some easing of the supply chain delays.  And third, the low sales during the recession and somewhat low sales in the remainder of 2020 led to a lot of pent-up demand.  It is true that many buyers were switching to purchase of used cars in 2020, but these were experiencing considerable price rises because of the great demand.  It made sense that buyers could resume purchase of new cars in 2021.  The plots also show that dollars spent on purchases lowered somewhat to a more steady trajectory in 2022 after the steep rise in 2021.
+
+**Discussion and Speculation**
+
+During Covid-19, there was a significant drop in car sales. Unlike the impact of the Great Recession in 2008, the magnitude of the impact of Covid-19 on U.S. car sales was more dramatic, more abrupt, and shorter in duration. Another difference is that the Great Recession directly affected the overall car sales market trend (the intercept and slope of the time series plot) and took a long time to recover. Covid-19 temporarily reduced car sales but was followed by a sharp increase. The possible reason for this is that the Great Depression had an impact on people's income and economic situation, making people reluctant to spend on cars. And the sudden drop of sales during covid-19 period may be temporary due to the country's policy of entry and exit and import/export, resulting in people having money but not being able to buy cars. So after a period of time, the policy was slowly restored and 1) a group of people who were prepared to buy cars before concentrated on spending during the period after the restoration, and 2) there may have been some retaliatory spending.
+
+## Remarks
+
+1. The multiplicative decomposition model is suitable for the data.
+2. The prediction of model 1 is not accurate, and the predicted data is higher than the actual data.
+3. The month of highest car sales is August and the month of lowest car sales is January. There is a stable high level of car retails from March to August following by an obvious decrease in September and a recovery in February of the next year.
+4. Although model 1 is not adequately to estimate the trend structure in the following 24 months, it still has the ability to estimate the static seasonal structure.
+5. During Covid-19, there was a significant drop in car sales. Unlike the impact of the Great Recession in 2008, the magnitude of the impact of Covid-19 on U.S. car sales was more dramatic, more abrupt, and shorter in duration. Another difference is that the Great Recession directly affected the overall car sales market trend and took a long time to recover.
+
+## Reference
+
+1. A timeline of covid-19 developments in 2020. AJMC. (n.d.). Retrieved October 17, 2022, from https://www.ajmc.com/view/a-timeline-of-covid19-developments-in-2020 
+
+2. President, J. C. V., Cusick, J., President; Roberts, W. (2022, January 19). 2021 was a year of bold economic policy that must be extended. Center for American Progress. Retrieved October 18, 2022, from https://www.americanprogress.org/article/2021-was-a-year-of-bold-economic-policy-that-must-be-extended/ 
